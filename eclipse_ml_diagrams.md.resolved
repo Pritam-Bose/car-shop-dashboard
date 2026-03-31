@@ -1,0 +1,499 @@
+# ECLIPSE — ML Research Block Diagrams
+
+> No project files were modified. All diagrams are derived from plans, code, and reports.
+
+---
+
+## 1. Overall System Architecture
+
+```mermaid
+flowchart TD
+    classDef user fill:#4A90D9,stroke:#2C5F8A,color:#fff
+    classDef frontend fill:#7B68EE,stroke:#4B3FA0,color:#fff
+    classDef backend fill:#2ECC71,stroke:#1A7A44,color:#fff
+    classDef model fill:#E67E22,stroke:#A04A00,color:#fff
+    classDef store fill:#95A5A6,stroke:#5D7275,color:#fff
+    classDef response fill:#E74C3C,stroke:#922B21,color:#fff
+
+    U([User]):::user
+    FE[React Native Frontend]:::frontend
+    BE[Flask Backend API]:::backend
+    EM[Emotion Service]:::model
+    FU[Fusion Engine]:::model
+    RG["Response Generator GPT-2"]:::response
+    DS[(Feature Vector Store)]:::store
+
+    U -->|Types slash Speaks slash Shows face| FE
+    FE -->|POST /chat + typing_metadata| BE
+    FE -->|POST /voice + audio| BE
+    FE -->|POST /face + frame| BE
+    BE --> EM
+    EM --> FU
+    FU --> RG
+    RG -->|Clean adaptive response| BE
+    BE -->|JSON reply| FE
+    FE -->|Displays response| U
+    EM -->|Feature vectors only| DS
+```
+
+---
+
+## 2. Full Multimodal Emotion Pipeline
+
+```mermaid
+flowchart LR
+    classDef input fill:#3498DB,stroke:#1A5276,color:#fff
+    classDef model fill:#E67E22,stroke:#784212,color:#fff
+    classDef fusion fill:#27AE60,stroke:#145A32,color:#fff
+    classDef output fill:#E74C3C,stroke:#922B21,color:#fff
+
+    subgraph INPUTS["Inputs"]
+        T[Text Message]:::input
+        KS[Keystroke Metadata]:::input
+        AU[Audio WAV]:::input
+        FR[Camera Frame]:::input
+    end
+
+    subgraph MODELS["ML Models"]
+        BERT["BERT-base-uncased\nText Emotion 7 classes"]:::model
+        HS["Hesitation Score\nWeighted Formula"]:::model
+        LBRS["Librosa Features\nRule-based Speech Model"]:::model
+        CNN["OpenCV + CNN\nFER 7 classes"]:::model
+    end
+
+    subgraph FUSION["Fusion Engine"]
+        WC["Weight Calculator\ntext 0.5 / voice 0.3 / face 0.15 / hesit 0.05"]:::fusion
+        EA["Emotion Aggregator\nWeighted probability sum"]:::fusion
+        CB["Context Builder\nTone selection"]:::fusion
+    end
+
+    subgraph RESPONSE["Response"]
+        GPT2["GPT-2\nPrompt routing + Sanitization"]:::output
+        OUT["Adaptive Reply\ntone + emotion label"]:::output
+    end
+
+    T --> BERT
+    KS --> HS
+    AU --> LBRS
+    FR --> CNN
+
+    BERT --> WC
+    HS --> WC
+    LBRS --> WC
+    CNN --> WC
+
+    WC --> EA --> CB --> GPT2 --> OUT
+```
+
+---
+
+## 3. BERT Text Emotion Model
+
+```mermaid
+flowchart TD
+    classDef raw    fill:#2980B9,stroke:#1A5276,color:#fff
+    classDef proc   fill:#8E44AD,stroke:#5B2C6F,color:#fff
+    classDef model  fill:#D35400,stroke:#784212,color:#fff
+    classDef sfx    fill:#C0392B,stroke:#7B241C,color:#fff
+    classDef prob   fill:#2C3E50,stroke:#1A252F,color:#fff
+    classDef argx   fill:#E74C3C,stroke:#922B21,color:#fff
+    classDef gate   fill:#F39C12,stroke:#7D6608,color:#fff
+    classDef fall   fill:#7F8C8D,stroke:#4D5656,color:#fff
+    classDef norm   fill:#16A085,stroke:#0E6655,color:#fff
+    classDef happy  fill:#F1C40F,stroke:#9A7D0A,color:#222
+    classDef sad    fill:#5D6D7E,stroke:#2E4057,color:#fff
+    classDef neut   fill:#27AE60,stroke:#145A32,color:#fff
+
+    RAW["Raw User Text"]:::raw
+    CLEAN["Text Cleaner\nlower-case · strip whitespace"]:::proc
+    TOK["BERT Tokenizer\nCLS t1 t2 ... tn SEP\nmax_length=128 tokens"]:::proc
+    ENC["BERT-base-uncased Encoder\n12 Transformer layers\n768 hidden · 12 heads · 110M params"]:::model
+    CLS["CLS Token Pooling\nh_cls = H at position 0\n768-dim sentence vector"]:::model
+    HEAD["Linear Classification Head\nz = W_c · h_cls + b_c\n768 → 7 logits"]:::model
+
+    SOFT["SOFTMAX\nP(E | x) = exp(z_i) / Σ exp(z_j)\n→ Emotion Probability Distribution"]:::sfx
+
+    P1["Joy\nP1"]:::prob
+    P2["Sadness\nP2"]:::prob
+    P3["Anger\nP3"]:::prob
+    P4["Fear\nP4"]:::prob
+    P5["Surprise\nP5"]:::prob
+    P6["Disgust\nP6"]:::prob
+    P7["Neutral\nP7"]:::prob
+
+    ARGMAX["ARGMAX\nE_text = argmax P(E | x)\nc = max probability value"]:::argx
+
+    GATE{"Confidence Gate\nc >= 0.5 ?"}:::gate
+    FALL["Fallback\n→ neutral · c = 1.0"]:::fall
+
+    NORM["_normalize_emotion()\njoy / happiness / excited  → joy\nsad / depression / negative → sadness\nneutral / ok / normal      → neutral"]:::norm
+
+    H["HAPPY\nwarm tone · max 100 tokens"]:::happy
+    S["SAD\nempathetic tone · max 120 tokens"]:::sad
+    N["NEUTRAL\nhelpful tone · max 150 tokens"]:::neut
+
+    RAW --> CLEAN --> TOK --> ENC --> CLS --> HEAD --> SOFT
+    SOFT --> P1 & P2 & P3 & P4 & P5 & P6 & P7
+    P1 & P2 & P3 & P4 & P5 & P6 & P7 --> ARGMAX
+    ARGMAX --> GATE
+    GATE -->|"c < 0.5"| FALL
+    GATE -->|"c >= 0.5"| NORM
+    NORM --> H & S & N
+```
+
+---
+
+## 4. Typing Behavior and Hesitation Score
+
+```mermaid
+flowchart TD
+    classDef fe fill:#7B68EE,stroke:#4B3FA0,color:#fff
+    classDef compute fill:#16A085,stroke:#0E6655,color:#fff
+    classDef score fill:#E67E22,stroke:#784212,color:#fff
+    classDef out fill:#27AE60,stroke:#145A32,color:#fff
+
+    subgraph FRONT["Frontend Hook — useTypingBehavior"]
+        FO["User focuses input"]:::fe
+        KEY["Keystroke event"]:::fe
+        REC["recordKeystroke(isDelete)"]:::fe
+        PAUSE["Pause detection · interval > 500ms"]:::fe
+        META["TypingMetadata\ntyping_duration_ms\npause_intervals_ms\ndelete_count\nkeystroke_count\ncharacter_count"]:::fe
+    end
+
+    subgraph BACK["Backend — TypingService"]
+        PS["Pause Score\navg_pause / 5000  weight 0.4"]:::compute
+        PF["Pause Frequency Score\nweight 0.3"]:::compute
+        DS["Delete Score\ndelete / keystrokes / 0.5  weight 0.2"]:::compute
+        SS["Speed Score\ninverse chars-per-sec  weight 0.1"]:::compute
+        WS["Weighted Sum · clamp 0-1"]:::score
+        HS["Hesitation Score 0.0 to 1.0"]:::out
+    end
+
+    FO --> KEY --> REC --> PAUSE --> META
+    META -->|POST /chat| PS & PF & DS & SS
+    PS & PF & DS & SS --> WS --> HS
+```
+
+---
+
+## 5. Speech Emotion Pipeline
+
+```mermaid
+flowchart TD
+    classDef fe fill:#7B68EE,stroke:#4B3FA0,color:#fff
+    classDef proc fill:#1ABC9C,stroke:#0E6655,color:#fff
+    classDef feat fill:#E67E22,stroke:#784212,color:#fff
+    classDef model fill:#8E44AD,stroke:#5B2C6F,color:#fff
+    classDef out fill:#27AE60,stroke:#145A32,color:#fff
+
+    subgraph FRONT2["Frontend — useAudioRecorder"]
+        MIC["Mic Button pressed"]:::fe
+        REC2["AudioRecorderPlayer\nrecord eclipse_recording.wav"]:::fe
+        STOP["Stop → upload WAV"]:::fe
+    end
+
+    subgraph BACK2["Backend — AudioProcessor via librosa"]
+        LOAD["Load audio sr=16000 mono"]:::proc
+        SR2["Speech Rate\nonset_detect → WPM"]:::feat
+        SIL["Silence Duration\nRMS below 5 percent max → ms"]:::feat
+        PITCH["Pitch Features\nmean / std / min / max Hz"]:::feat
+        ENERGY["Energy Features\nRMS mean / std / min / max"]:::feat
+        MFCC["MFCC 13 coefficients\nmean across time"]:::feat
+        TRANS["STT Transcription\nSpeechRecognition → text"]:::proc
+    end
+
+    subgraph MODEL["Speech Emotion Model"]
+        RULES["Rule Engine\nfast + high energy → joy\nslow + silence → sadness\nhigh pitch + energy → anger\nlow pitch + energy → fear"]:::model
+        PROB["Probability Vector P7"]:::model
+        EMO2["Speech Emotion + confidence"]:::out
+    end
+
+    MIC --> REC2 --> STOP --> LOAD
+    LOAD --> SR2 & SIL & PITCH & ENERGY & MFCC & TRANS
+    SR2 & SIL & PITCH & ENERGY & MFCC --> RULES --> PROB --> EMO2
+```
+
+---
+
+## 6. Facial Detection and Emotion Pipeline
+
+```mermaid
+flowchart TD
+    classDef fe fill:#7B68EE,stroke:#4B3FA0,color:#fff
+    classDef priv fill:#E74C3C,stroke:#922B21,color:#fff
+    classDef proc fill:#1ABC9C,stroke:#0E6655,color:#fff
+    classDef model fill:#E67E22,stroke:#784212,color:#fff
+    classDef out fill:#27AE60,stroke:#145A32,color:#fff
+    classDef gate fill:#F39C12,stroke:#7D6608,color:#fff
+
+    subgraph FRONT3["Frontend — Delta Button"]
+        DELTA["Delta Button pressed"]:::fe
+        PERM["Permission Modal Consent"]:::fe
+        CAP["takePhoto every 3s\nspeed priority · no shutter"]:::fe
+        UPLOAD["POST /face — single frame JPEG"]:::fe
+    end
+
+    subgraph BACK3["Backend — ImageProcessor via OpenCV"]
+        LOAD2["Load image cv2.imdecode"]:::proc
+        GREY["Convert to grayscale"]:::proc
+        HAAR["Haar Cascade detectMultiScale\nscaleFactor 1.1 · minNeighbors 5"]:::proc
+        FACE{"Face detected?"}:::gate
+        CROP["Extract + pad face region"]:::proc
+        RESIZE["Resize 48x48 · Normalize 0-1"]:::proc
+        DISCARD["Raw image DISCARDED\nonly feature vector forwarded"]:::priv
+    end
+
+    subgraph MODEL2["CNN Face Emotion Model"]
+        CNN2["FER CNN Backbone\nResNet-50 or lightweight variant"]:::model
+        FACS["FACS Action Units\nAU4 AU6 AU12 AU17"]:::model
+        EAR2["Geometric Landmarks\nEAR · MAR · 68-point mesh"]:::model
+        SOFT2["Softmax P7\nP(E|I) = softmax(Wc · phi(I) + bc)"]:::model
+        EMO3["Face Emotion + confidence · weight lambda3"]:::out
+    end
+
+    DELTA --> PERM --> CAP --> UPLOAD
+    UPLOAD --> LOAD2 --> GREY --> HAAR --> FACE
+    FACE -->|No face| EMO3
+    FACE -->|Yes| CROP --> RESIZE --> DISCARD --> CNN2
+    CNN2 --> SOFT2 --> EMO3
+    FACS & EAR2 -.->|Feature input layers| CNN2
+```
+
+---
+
+## 7. Multimodal Fusion Engine
+
+```mermaid
+flowchart TB
+    classDef sig    fill:#3498DB,stroke:#1A5276,color:#fff
+    classDef weight fill:#9B59B6,stroke:#5B2C6F,color:#fff
+    classDef agg    fill:#27AE60,stroke:#145A32,color:#fff
+    classDef ctx    fill:#E67E22,stroke:#784212,color:#fff
+    classDef out    fill:#E74C3C,stroke:#922B21,color:#fff
+    classDef theory fill:#1A1A2E,stroke:#4A4AFF,color:#cdf,font-style:italic
+
+    subgraph THEORY["Fusion Theory"]
+        direction TB
+        F71["7.1 General Form\nE_final = sum_i( w_i · E_i )\nconstraint: sum_i( w_i ) = 1"]:::theory
+        F72["7.2 Classical Fixed\nE_final = L1·E_text + L2·E_typing + L3·E_optional\nL1=0.9  L2=0.1  L3=0 (reserved)"]:::theory
+        F73["7.3 Confidence-Weighted Adaptive\nw_i = (base_i · min(1, c_i·k)) / sum_j(base_j · min(1,c_j·k))\nk=2.0  min_conf=0.3"]:::theory
+        F71 --> F72 --> F73
+    end
+
+    subgraph SIGNALS["Emotion Signals In"]
+        direction TB
+        TE["Text Emotion\nbase 0.5"]:::sig
+        VE["Voice Emotion\nbase 0.3"]:::sig
+        FE3["Face Emotion\nbase 0.15"]:::sig
+        HE["Hesitation Score\nbase 0.05"]:::sig
+    end
+
+    subgraph WCALC["Weight Calculator (7.3)"]
+        direction TB
+        CHK["conf < 0.3 → w = 0"]:::weight
+        SC["w_i = base_i · min(1, c_i · 2)"]:::weight
+        NRM["Normalize: sum(w_i) = 1"]:::weight
+        CHK --> SC --> NRM
+    end
+
+    subgraph AGG["Emotion Aggregator (7.1)"]
+        direction TB
+        WAVG["E_final = sum_i(w_i · P_i) over P7"]:::agg
+        HADJ["High hesitation → boost neutral"]:::agg
+        RNRM["Re-normalize probabilities"]:::agg
+        ARGM["argmax → emotion + confidence"]:::agg
+        WAVG --> HADJ --> RNRM --> ARGM
+    end
+
+    subgraph CTX["Context Builder"]
+        direction TB
+        CAT["Category\npositive / negative / neutral / ambiguous"]:::ctx
+        TONE["Tone: conf >= 0.5 → specific\nelse → neutral"]:::ctx
+        CAT --> TONE
+    end
+
+    FCTX["Fused Context\nemotion · confidence · tone · probabilities"]:::out
+
+    THEORY -. "implements" .-> WCALC
+    TE & VE & FE3 & HE --> CHK
+    NRM --> WAVG
+    ARGM --> CAT
+    TONE --> FCTX
+```
+
+---
+
+## 8. Response Generation Pipeline (GPT-2)
+
+```mermaid
+flowchart TD
+    classDef in fill:#3498DB,stroke:#1A5276,color:#fff
+    classDef route fill:#9B59B6,stroke:#5B2C6F,color:#fff
+    classDef gen fill:#E67E22,stroke:#784212,color:#fff
+    classDef san fill:#27AE60,stroke:#145A32,color:#fff
+    classDef val fill:#E74C3C,stroke:#922B21,color:#fff
+
+    CTX2["Fused Context + User Message"]:::in
+
+    subgraph ROUTING["Stage 1 — Prompt Routing"]
+        ER{{"Emotion Router"}}:::route
+        SAD["SADNESS · empathetic · max 120 tokens"]:::route
+        JOY["JOY · warm · max 100 tokens"]:::route
+        ANG["ANGER · calm · max 140 tokens"]:::route
+        FEA["FEAR · reassuring · max 120 tokens"]:::route
+        NEU["NEUTRAL · helpful · max 150 tokens"]:::route
+        CON["CONFUSED · clarifying · max 150 tokens"]:::route
+    end
+
+    subgraph GEN["Stage 2 — GPT-2 Generation"]
+        GPT["GPT2LMHeadModel\ntemp=0.7 · top_p=0.9 · no_repeat_ngram=2"]:::gen
+        RAW["Raw output with possible artifacts"]:::gen
+    end
+
+    subgraph SAN["Stage 3 — Output Sanitization"]
+        S1["Remove 9 stop tokens"]:::san
+        S2["Remove 11 contamination patterns\nrole labels · dataset markers · separators"]:::san
+        S3["Trim at paragraph break"]:::san
+        S4["Enforce sentence boundary"]:::san
+        S5["Apply max token limit"]:::san
+    end
+
+    subgraph VAL["Stage 4 — Quality Validation"]
+        V1{"Length >= 10 chars?"}:::val
+        V2{"No contamination markers?"}:::val
+        V3{"No incomplete tokens?"}:::val
+        FB["Fallback safe response"]:::val
+        CLEAN["Clean Response to UI"]:::san
+    end
+
+    CTX2 --> ER
+    ER --> SAD & JOY & ANG & FEA & NEU & CON
+    SAD & JOY & ANG & FEA & NEU & CON --> GPT --> RAW
+    RAW --> S1 --> S2 --> S3 --> S4 --> S5
+    S5 --> V1 -->|Pass| V2 -->|Pass| V3 -->|Pass| CLEAN
+    V1 -->|Fail| FB
+    V2 -->|Fail| FB
+    V3 -->|Fail| FB
+```
+
+---
+
+## 9. Emotion-to-Tone Routing
+
+```mermaid
+flowchart LR
+    classDef emo fill:#3498DB,stroke:#1A5276,color:#fff
+    classDef tone fill:#E67E22,stroke:#784212,color:#fff
+    classDef resp fill:#27AE60,stroke:#145A32,color:#fff
+
+    JOY2["Joy"]:::emo --> ENT["Enthusiastic Tone"]:::tone
+    SAD2["Sadness"]:::emo --> SUP["Supportive Tone"]:::tone
+    ANG2["Anger"]:::emo --> SUP
+    FEA2["Fear"]:::emo --> SUP
+    SUR2["Surprise"]:::emo --> CLA["Clarifying Tone"]:::tone
+    DIS2["Disgust"]:::emo --> NEU2["Neutral Tone"]:::tone
+    NEU3["Neutral"]:::emo --> NEU2
+    LOW["Low Confidence < 0.5"]:::emo --> NEU2
+
+    ENT --> R1["Warm enthusiastic reply\nmax 100 tokens"]:::resp
+    SUP --> R2["Empathetic validating reply\nmax 120-140 tokens"]:::resp
+    CLA --> R3["Exploratory questioning reply\nmax 150 tokens"]:::resp
+    NEU2 --> R4["Balanced helpful reply\nmax 150 tokens"]:::resp
+```
+
+---
+
+## 10. Privacy Data Flow
+
+```mermaid
+flowchart LR
+    classDef raw fill:#E74C3C,stroke:#922B21,color:#fff
+    classDef feat fill:#27AE60,stroke:#145A32,color:#fff
+    classDef store fill:#95A5A6,stroke:#5D7275,color:#fff
+    classDef discard fill:#7F8C8D,stroke:#4D5656,color:#fff
+
+    RI["Raw Image Frame"]:::raw --> FE4["Extract face features\nface_rect · region_size"] --> DISC1["Image DISCARDED"]:::discard
+    FE4 --> FV1["Face Feature Vector\nJSON only"]:::feat --> FS[(face_features/)]:::store
+
+    RA["Raw Audio WAV"]:::raw --> FE5["Extract speech features\nWPM · pitch · energy · MFCC"] --> DISC2["Audio DISCARDED"]:::discard
+    FE5 --> FV2["Speech Feature Vector\nJSON only"]:::feat --> SS2[(speech_features/)]:::store
+
+    RT["Raw Text"]:::raw --> FE6["BERT inference\nemotion probabilities"] --> FV3["Text Feature Vector\nprobabilities · confidence"]:::feat --> TS[(text_features/)]:::store
+
+    KM["Keystroke Metadata\nnot keystrokes content"] --> FE7["Compute hesitation score"] --> FV4["Typing Feature Vector\nhesitation_score · pause_count"]:::feat --> KS2[(typing_features/)]:::store
+```
+
+---
+
+## 11. BERT Softmax — Emotion Probability Distribution (Bar Chart)
+
+> Example output for input: *"I feel really sad today"*
+> Predicted: **Sadness (0.72)** · Confidence above threshold ✓
+
+```mermaid
+xychart-beta
+    title "BERT Softmax Output — Emotion Probability P7"
+    x-axis ["Joy", "Sadness", "Anger", "Fear", "Surprise", "Disgust", "Neutral"]
+    y-axis "Probability  0.0 → 1.0" 0 --> 1
+    bar [0.03, 0.72, 0.06, 0.05, 0.02, 0.01, 0.11]
+```
+
+---
+
+## 12. Fusion Engine — Modality Base Weights (Bar Chart)
+
+> Base weights before confidence scaling.
+> Text dominates because it is the only always-present modality.
+
+```mermaid
+xychart-beta
+    title "Multimodal Fusion — Base Modality Weights"
+    x-axis ["Text (BERT)", "Voice (Speech)", "Face (FER)", "Hesitation (Typing)"]
+    y-axis "Base Weight  0.0 → 1.0" 0 --> 1
+    bar [0.50, 0.30, 0.15, 0.05]
+```
+
+---
+
+## 13. Hesitation Score — Trajectory Over Conversation Turns (Line Plot)
+
+> Simulated session: user becomes increasingly distressed (turns 3–4), then stabilises.
+> H = 0 → calm · H = 1 → highly distressed / hesitant
+
+```mermaid
+xychart-beta
+    title "Hesitation Score H — Per Conversation Turn"
+    x-axis ["Turn 1", "Turn 2", "Turn 3", "Turn 4", "Turn 5", "Turn 6", "Turn 7", "Turn 8"]
+    y-axis "Hesitation Score H  0.0 → 1.0" 0 --> 1
+    line [0.10, 0.25, 0.55, 0.80, 0.65, 0.42, 0.28, 0.15]
+```
+
+---
+
+## 14. Response Length Limits by Detected Emotion (Bar Chart)
+
+> From [response_pipeline.py](file:///d:/ECLIPSE/backend/app/response_pipeline.py) RESPONSE_LENGTH_LIMITS.
+> Shorter = more focused emotional support · Longer = more conversational room.
+
+```mermaid
+xychart-beta
+    title "Max Response Tokens by Emotion — Response Pipeline"
+    x-axis ["Happy", "Sadness", "Fear", "Anger", "Confused", "Neutral"]
+    y-axis "Max Tokens" 0 --> 200
+    bar [100, 120, 120, 140, 150, 150]
+```
+
+---
+
+## 15. Hesitation Score — Weighted Component Breakdown (Bar Chart)
+
+> Decomposition of H for a single high-hesitation message.
+> H = 0.4·P_score + 0.3·P_freq + 0.2·D_score + 0.1·Speed_score
+
+```mermaid
+xychart-beta
+    title "Hesitation Score H — Component Contributions"
+    x-axis ["Pause Duration x0.4", "Pause Frequency x0.3", "Delete Ratio x0.2", "Speed Inverse x0.1"]
+    y-axis "Weighted Contribution  0.0 → 0.5" 0 --> 0.5
+    bar [0.32, 0.21, 0.14, 0.07]
+```
