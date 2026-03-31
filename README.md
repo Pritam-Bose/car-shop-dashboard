@@ -41,3 +41,6 @@ Use any email + any password (≥ 6 characters) to sign in.
 | `/favorites` | Saved cars |
 | `/dashboard` | Protected user dashboard |
 | `/login` | Authentication |
+
+Live Demo: (https://car-shop-dashboard.vercel.app/)
+
